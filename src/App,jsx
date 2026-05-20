@@ -1,0 +1,1244 @@
+import { useState, useEffect, useMemo, useRef } from "react";
+import {
+  LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip,
+  BarChart, Bar, CartesianGrid, ReferenceLine, Area, AreaChart
+} from "recharts";
+import {
+  Check, Plus, Minus, Trash2, ChevronDown, ChevronRight,
+  Flame, Droplet, Dumbbell, BookOpen, Code2, Target,
+  TrendingDown, TrendingUp, Moon, Footprints, Beef, Zap,
+  Clock, Calendar, Award, ChevronUp
+} from "lucide-react";
+
+// ─── CONSTANTS ─────────────────────────────────────────────────────────────────
+const TARGET_DATE = new Date("2026-06-30T23:59:59");
+const SPRINT_START = new Date("2026-05-20T00:00:00");
+const STORAGE_KEY = "june-sprint-v1";
+
+const COLORS = {
+  bg: "#0a0a0b",
+  card: "#111114",
+  cardHover: "#16161a",
+  border: "rgba(255,255,255,0.06)",
+  borderStrong: "rgba(255,255,255,0.12)",
+  text: "#fafafa",
+  muted: "#71717a",
+  mutedDim: "#52525b",
+  physique: "#4ade80",
+  physiqueDim: "#16a34a",
+  revision: "#22d3ee",
+  revisionDim: "#0891b2",
+  coding: "#a78bfa",
+  codingDim: "#7c3aed",
+};
+
+// ─── DEFAULT STATE ─────────────────────────────────────────────────────────────
+const DEFAULT_STATE = {
+  weighIns: [], // {date: ISO, weight: number}
+  exerciseLog: {}, // {YYYY-MM-DD: hours}
+  habitsLog: {}, // {YYYY-MM-DD: {water, steps, protein, sleep, noLateEat}}
+  startWeight: "",
+  goalWeight: "",
+  subjects: [
+    {
+      id: "s1", name: "Subject 1", hoursLogged: 0, expanded: true,
+      subtopics: [
+        { id: "st1", title: "Topic A", done: false },
+        { id: "st2", title: "Topic B", done: false },
+        { id: "st3", title: "Topic C", done: false },
+      ],
+    },
+    {
+      id: "s2", name: "Subject 2", hoursLogged: 0, expanded: false,
+      subtopics: [
+        { id: "st4", title: "Topic A", done: false },
+        { id: "st5", title: "Topic B", done: false },
+      ],
+    },
+  ],
+  modules: [
+    {
+      id: "m1", title: "Python Fundamentals",
+      desc: "Variables, control flow, functions, OOP, modules, virtual envs",
+      progress: 0, hours: 0, done: false,
+    },
+    {
+      id: "m2", title: "Data Structures & Libraries",
+      desc: "Lists, dicts, comprehensions, NumPy arrays, Pandas DataFrames",
+      progress: 0, hours: 0, done: false,
+    },
+    {
+      id: "m3", title: "Financial Data APIs",
+      desc: "yfinance, Alpha Vantage, requests, JSON parsing, rate limits",
+      progress: 0, hours: 0, done: false,
+    },
+    {
+      id: "m4", title: "Analysis & Visualization",
+      desc: "matplotlib, returns calculations, volatility, correlations, plotting",
+      progress: 0, hours: 0, done: false,
+    },
+    {
+      id: "m5", title: "Strategy Design",
+      desc: "Moving averages, momentum, mean reversion, signal generation",
+      progress: 0, hours: 0, done: false,
+    },
+    {
+      id: "m6", title: "Backtesting Framework",
+      desc: "Vectorized backtests, slippage, transaction costs, Sharpe ratio",
+      progress: 0, hours: 0, done: false,
+    },
+    {
+      id: "m7", title: "Risk & Position Sizing",
+      desc: "Volatility targeting, Kelly criterion, max drawdown, portfolio weights",
+      progress: 0, hours: 0, done: false,
+    },
+    {
+      id: "m8", title: "Live Automation",
+      desc: "Broker APIs (Alpaca), scheduling (cron), deployment, error handling",
+      progress: 0, hours: 0, done: false,
+    },
+  ],
+  finalProject: [
+    { id: "fp1", title: "Define universe (FTSE 100 + your conviction names)", done: false },
+    { id: "fp2", title: "Build data ingestion pipeline", done: false },
+    { id: "fp3", title: "Implement core strategy logic", done: false },
+    { id: "fp4", title: "Backtest with 5y historical data", done: false },
+    { id: "fp5", title: "Add risk controls (stop loss, max position)", done: false },
+    { id: "fp6", title: "Connect to paper trading broker", done: false },
+    { id: "fp7", title: "Schedule daily execution", done: false },
+    { id: "fp8", title: "Deploy to cloud (Railway / VPS)", done: false },
+  ],
+};
+
+// ─── HELPERS ───────────────────────────────────────────────────────────────────
+const isoDay = (d) => d.toISOString().slice(0, 10);
+const today = () => isoDay(new Date());
+const fmtNum = (n, d = 1) => Number.isFinite(n) ? n.toFixed(d) : "—";
+
+function useCountdown(target) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const ms = target.getTime() - now.getTime();
+  const total = Math.max(0, ms);
+  const days = Math.floor(total / 86400000);
+  const hours = Math.floor((total % 86400000) / 3600000);
+  const minutes = Math.floor((total % 3600000) / 60000);
+  const seconds = Math.floor((total % 60000) / 1000);
+  return { days, hours, minutes, seconds, now };
+}
+
+// ─── ATOMIC UI ─────────────────────────────────────────────────────────────────
+const Label = ({ children, color = COLORS.muted, className = "" }) => (
+  <span
+    className={`uppercase font-mono ${className}`}
+    style={{ fontSize: 10, letterSpacing: "0.18em", color }}
+  >
+    {children}
+  </span>
+);
+
+const Card = ({ accent, children, className = "" }) => (
+  <div
+    className={`relative rounded-xl border ${className}`}
+    style={{ background: COLORS.card, borderColor: COLORS.border }}
+  >
+    <div
+      className="absolute top-0 left-0 right-0 h-px rounded-t-xl"
+      style={{ background: `linear-gradient(90deg, transparent, ${accent}, transparent)`, opacity: 0.5 }}
+    />
+    {children}
+  </div>
+);
+
+const ProgressBar = ({ value, color, height = 6 }) => (
+  <div
+    className="w-full rounded-full overflow-hidden"
+    style={{ background: "rgba(255,255,255,0.05)", height }}
+  >
+    <div
+      className="h-full rounded-full transition-all duration-500"
+      style={{
+        width: `${Math.min(100, Math.max(0, value))}%`,
+        background: `linear-gradient(90deg, ${color}aa, ${color})`,
+        boxShadow: `0 0 8px ${color}66`,
+      }}
+    />
+  </div>
+);
+
+const IconButton = ({ children, onClick, color = COLORS.muted, title }) => (
+  <button
+    onClick={onClick}
+    title={title}
+    className="w-7 h-7 rounded-md flex items-center justify-center transition-colors hover:bg-white/5"
+    style={{ color }}
+  >
+    {children}
+  </button>
+);
+
+// ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
+export default function JuneSprintDashboard() {
+  const [state, setState] = useState(DEFAULT_STATE);
+  const [loaded, setLoaded] = useState(false);
+  const [activeTab, setActiveTab] = useState("all"); // all | physique | revision | coding
+  const saveTimer = useRef(null);
+
+  const { days, hours, minutes, seconds, now } = useCountdown(TARGET_DATE);
+
+  // Load persistent state
+  useEffect(() => {
+    (async () => {
+      try {
+        if (typeof window !== "undefined" && window.storage) {
+          const r = await window.storage.get(STORAGE_KEY);
+          if (r?.value) {
+            const parsed = JSON.parse(r.value);
+            setState((s) => ({ ...s, ...parsed }));
+          }
+        }
+      } catch (e) { /* first run */ }
+      setLoaded(true);
+    })();
+  }, []);
+
+  // Debounced save
+  useEffect(() => {
+    if (!loaded) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        if (typeof window !== "undefined" && window.storage) {
+          await window.storage.set(STORAGE_KEY, JSON.stringify(state));
+        }
+      } catch (e) { /* swallow */ }
+    }, 400);
+    return () => saveTimer.current && clearTimeout(saveTimer.current);
+  }, [state, loaded]);
+
+  // ─── DERIVED METRICS ──────────────────────────────────────────────────────
+  const totalSprintDays = Math.ceil((TARGET_DATE - SPRINT_START) / 86400000);
+  const elapsedDays = Math.max(0, Math.min(totalSprintDays, Math.floor((now - SPRINT_START) / 86400000)));
+  const sprintProgressPct = (elapsedDays / totalSprintDays) * 100;
+
+  const physiqueProgress = useMemo(() => {
+    const startW = parseFloat(state.startWeight);
+    const goalW = parseFloat(state.goalWeight);
+    const latest = state.weighIns[state.weighIns.length - 1]?.weight;
+    if (!Number.isFinite(startW) || !Number.isFinite(goalW) || !Number.isFinite(latest)) return 0;
+    if (startW === goalW) return 100;
+    const pct = ((startW - latest) / (startW - goalW)) * 100;
+    return Math.max(0, Math.min(100, pct));
+  }, [state.weighIns, state.startWeight, state.goalWeight]);
+
+  const revisionProgress = useMemo(() => {
+    const all = state.subjects.flatMap((s) => s.subtopics);
+    if (!all.length) return 0;
+    return (all.filter((t) => t.done).length / all.length) * 100;
+  }, [state.subjects]);
+
+  const codingProgress = useMemo(() => {
+    const moduleAvg = state.modules.reduce((a, m) => a + (m.done ? 100 : m.progress), 0) / state.modules.length;
+    const fpDone = state.finalProject.filter((t) => t.done).length / state.finalProject.length * 100;
+    return moduleAvg * 0.7 + fpDone * 0.3;
+  }, [state.modules, state.finalProject]);
+
+  const overallProgress = (physiqueProgress + revisionProgress + codingProgress) / 3;
+
+  if (!loaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: COLORS.bg }}>
+        <div style={{ color: COLORS.muted }} className="font-mono text-sm tracking-widest uppercase">
+          Loading sprint…
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="min-h-screen px-4 py-6 md:px-8 md:py-10"
+      style={{ background: COLORS.bg, color: COLORS.text, fontFamily: "ui-sans-serif, system-ui, -apple-system, sans-serif" }}
+    >
+      <div className="max-w-7xl mx-auto">
+        {/* HEADER */}
+        <Header days={days} hours={hours} minutes={minutes} seconds={seconds} now={now} />
+
+        {/* KPI STRIP */}
+        <KpiStrip
+          sprintProgressPct={sprintProgressPct}
+          elapsedDays={elapsedDays}
+          totalDays={totalSprintDays}
+          daysLeft={days}
+          overall={overallProgress}
+          physique={physiqueProgress}
+          revision={revisionProgress}
+          coding={codingProgress}
+        />
+
+        {/* TAB FILTER */}
+        <TabBar active={activeTab} setActive={setActiveTab} />
+
+        {/* PILLARS */}
+        <div
+          className={`grid gap-5 mt-5 ${
+            activeTab === "all" ? "lg:grid-cols-3" : "grid-cols-1"
+          }`}
+        >
+          {(activeTab === "all" || activeTab === "physique") && (
+            <PhysiqueCard state={state} setState={setState} progress={physiqueProgress} />
+          )}
+          {(activeTab === "all" || activeTab === "revision") && (
+            <RevisionCard state={state} setState={setState} progress={revisionProgress} />
+          )}
+          {(activeTab === "all" || activeTab === "coding") && (
+            <CodingCard state={state} setState={setState} progress={codingProgress} />
+          )}
+        </div>
+
+        {/* FOOTER */}
+        <div className="mt-10 pt-6 border-t flex items-center justify-between" style={{ borderColor: COLORS.border }}>
+          <Label>June Sprint · v1.0 · Auto-saved</Label>
+          <Label>Target: 30 Jun 2026 · 23:59</Label>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── HEADER ────────────────────────────────────────────────────────────────────
+function Header({ days, hours, minutes, seconds, now }) {
+  const segs = [
+    { label: "Days", val: String(days).padStart(2, "0") },
+    { label: "Hrs", val: String(hours).padStart(2, "0") },
+    { label: "Min", val: String(minutes).padStart(2, "0") },
+    { label: "Sec", val: String(seconds).padStart(2, "0") },
+  ];
+  return (
+    <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 mb-8">
+      <div>
+        <Label>Q2 · 2026 · Personal Performance Sprint</Label>
+        <h1
+          className="mt-2 font-light tracking-tight"
+          style={{ fontSize: "clamp(28px, 5vw, 48px)", lineHeight: 1.05, color: COLORS.text }}
+        >
+          June Sprint
+        </h1>
+        <div className="mt-2 flex items-center gap-3" style={{ color: COLORS.muted, fontSize: 13 }}>
+          <Calendar size={14} />
+          <span className="font-mono">
+            {now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+          </span>
+        </div>
+      </div>
+
+      {/* Countdown */}
+      <div className="flex gap-2 md:gap-3">
+        {segs.map((s, i) => (
+          <div
+            key={s.label}
+            className="rounded-lg border px-3 py-3 md:px-4 md:py-3 min-w-[64px] md:min-w-[78px] text-center relative overflow-hidden"
+            style={{ background: COLORS.card, borderColor: COLORS.border }}
+          >
+            {i === 0 && (
+              <div
+                className="absolute inset-x-0 top-0 h-px"
+                style={{ background: `linear-gradient(90deg, transparent, ${COLORS.physique}, transparent)` }}
+              />
+            )}
+            <div className="font-light tabular-nums" style={{ fontSize: 24, color: COLORS.text }}>
+              {s.val}
+            </div>
+            <Label className="mt-1 block">{s.label}</Label>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── KPI STRIP ─────────────────────────────────────────────────────────────────
+function KpiStrip({ sprintProgressPct, elapsedDays, totalDays, daysLeft, overall, physique, revision, coding }) {
+  const kpis = [
+    { label: "Sprint Progress", value: `${sprintProgressPct.toFixed(0)}%`, sub: `${elapsedDays} / ${totalDays} days`, color: "#fafafa", pct: sprintProgressPct },
+    { label: "Overall Completion", value: `${overall.toFixed(0)}%`, sub: "across 3 pillars", color: "#fafafa", pct: overall },
+    { label: "Physique", value: `${physique.toFixed(0)}%`, sub: "fat-loss progress", color: COLORS.physique, pct: physique },
+    { label: "Revision", value: `${revision.toFixed(0)}%`, sub: "topics covered", color: COLORS.revision, pct: revision },
+    { label: "Coding", value: `${coding.toFixed(0)}%`, sub: "path → portfolio", color: COLORS.coding, pct: coding },
+  ];
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      {kpis.map((k) => (
+        <div
+          key={k.label}
+          className="rounded-lg border p-4"
+          style={{ background: COLORS.card, borderColor: COLORS.border }}
+        >
+          <Label>{k.label}</Label>
+          <div className="mt-2 font-light tabular-nums" style={{ fontSize: 26, color: k.color }}>
+            {k.value}
+          </div>
+          <div style={{ color: COLORS.mutedDim, fontSize: 11 }} className="mb-2 font-mono">
+            {k.sub}
+          </div>
+          <ProgressBar value={k.pct} color={k.color === "#fafafa" ? COLORS.muted : k.color} height={3} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── TAB BAR ───────────────────────────────────────────────────────────────────
+function TabBar({ active, setActive }) {
+  const tabs = [
+    { id: "all", label: "All Pillars", color: COLORS.text },
+    { id: "physique", label: "Physique", color: COLORS.physique, icon: Dumbbell },
+    { id: "revision", label: "Revision", color: COLORS.revision, icon: BookOpen },
+    { id: "coding", label: "Coding", color: COLORS.coding, icon: Code2 },
+  ];
+  return (
+    <div className="flex flex-wrap gap-2">
+      {tabs.map((t) => {
+        const Icon = t.icon;
+        const isActive = active === t.id;
+        return (
+          <button
+            key={t.id}
+            onClick={() => setActive(t.id)}
+            className="px-3 py-2 rounded-md border text-sm transition-all flex items-center gap-2 font-mono uppercase tracking-wider"
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.12em",
+              background: isActive ? `${t.color}14` : "transparent",
+              borderColor: isActive ? `${t.color}55` : COLORS.border,
+              color: isActive ? t.color : COLORS.muted,
+            }}
+          >
+            {Icon && <Icon size={13} />}
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── PHYSIQUE CARD ─────────────────────────────────────────────────────────────
+function PhysiqueCard({ state, setState, progress }) {
+  const [weightInput, setWeightInput] = useState("");
+  const [exerciseInput, setExerciseInput] = useState("");
+
+  const todayKey = today();
+  const todayHabits = state.habitsLog[todayKey] || { water: false, steps: false, protein: false, sleep: false, noLateEat: false };
+  const todayExercise = state.exerciseLog[todayKey] || 0;
+
+  const addWeighIn = () => {
+    const w = parseFloat(weightInput);
+    if (!Number.isFinite(w)) return;
+    setState((s) => {
+      // Replace today's entry if it exists
+      const filtered = s.weighIns.filter((wi) => wi.date !== todayKey);
+      return {
+        ...s,
+        weighIns: [...filtered, { date: todayKey, weight: w }].sort((a, b) => a.date.localeCompare(b.date)),
+        startWeight: s.startWeight || String(w),
+      };
+    });
+    setWeightInput("");
+  };
+
+  const setExerciseToday = () => {
+    const h = parseFloat(exerciseInput);
+    if (!Number.isFinite(h) || h < 0) return;
+    setState((s) => ({ ...s, exerciseLog: { ...s.exerciseLog, [todayKey]: h } }));
+    setExerciseInput("");
+  };
+
+  const adjustExerciseToday = (delta) => {
+    setState((s) => {
+      const curr = s.exerciseLog[todayKey] || 0;
+      const next = Math.max(0, Math.round((curr + delta) * 4) / 4);
+      return { ...s, exerciseLog: { ...s.exerciseLog, [todayKey]: next } };
+    });
+  };
+
+  const toggleHabit = (key) => {
+    setState((s) => ({
+      ...s,
+      habitsLog: {
+        ...s.habitsLog,
+        [todayKey]: { ...todayHabits, [key]: !todayHabits[key] },
+      },
+    }));
+  };
+
+  const updateGoals = (field, val) => setState((s) => ({ ...s, [field]: val }));
+
+  // Weight chart data
+  const weightSeries = state.weighIns.slice(-30).map((w) => ({
+    date: w.date.slice(5),
+    weight: w.weight,
+  }));
+
+  // Weekly exercise
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const k = isoDay(d);
+    return {
+      day: d.toLocaleDateString("en-GB", { weekday: "short" }),
+      hours: state.exerciseLog[k] || 0,
+    };
+  });
+  const weekTotal = last7.reduce((a, b) => a + b.hours, 0);
+  const sprintTotalExercise = Object.values(state.exerciseLog).reduce((a, b) => a + b, 0);
+
+  // Weight delta
+  const startW = parseFloat(state.startWeight);
+  const latestW = state.weighIns[state.weighIns.length - 1]?.weight;
+  const delta = Number.isFinite(startW) && Number.isFinite(latestW) ? latestW - startW : null;
+
+  const habits = [
+    { key: "water", label: "2 L Water", icon: Droplet },
+    { key: "steps", label: "10k Steps", icon: Footprints },
+    { key: "protein", label: "Protein 1.6g/kg", icon: Beef },
+    { key: "sleep", label: "7+ hrs Sleep", icon: Moon },
+    { key: "noLateEat", label: "No Eating After 9pm", icon: Zap },
+  ];
+  const habitsHit = habits.filter((h) => todayHabits[h.key]).length;
+
+  return (
+    <Card accent={COLORS.physique} className="p-5 md:p-6">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-5">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Dumbbell size={14} style={{ color: COLORS.physique }} />
+            <Label color={COLORS.physique}>Pillar 01 · Physique</Label>
+          </div>
+          <h2 className="font-light" style={{ fontSize: 22, color: COLORS.text }}>
+            Fat-Loss Protocol
+          </h2>
+        </div>
+        <div className="text-right">
+          <div className="font-light tabular-nums" style={{ fontSize: 24, color: COLORS.physique }}>
+            {progress.toFixed(0)}%
+          </div>
+          <Label>To Goal</Label>
+        </div>
+      </div>
+
+      <ProgressBar value={progress} color={COLORS.physique} />
+
+      {/* Weight Goals */}
+      <div className="grid grid-cols-2 gap-2 mt-5">
+        <NumberInput
+          label="Start (kg)"
+          value={state.startWeight}
+          onChange={(v) => updateGoals("startWeight", v)}
+          color={COLORS.physique}
+        />
+        <NumberInput
+          label="Goal (kg)"
+          value={state.goalWeight}
+          onChange={(v) => updateGoals("goalWeight", v)}
+          color={COLORS.physique}
+        />
+      </div>
+
+      {/* Current Weight Display */}
+      <div className="mt-4 p-4 rounded-lg border" style={{ background: "rgba(74,222,128,0.03)", borderColor: "rgba(74,222,128,0.15)" }}>
+        <div className="flex items-end justify-between mb-3">
+          <div>
+            <Label>Current Weight</Label>
+            <div className="flex items-baseline gap-2 mt-1">
+              <div className="font-light tabular-nums" style={{ fontSize: 32, color: COLORS.text }}>
+                {Number.isFinite(latestW) ? fmtNum(latestW, 1) : "—"}
+              </div>
+              <div className="font-mono" style={{ color: COLORS.muted, fontSize: 12 }}>kg</div>
+              {delta !== null && (
+                <div
+                  className="flex items-center gap-1 ml-2 font-mono"
+                  style={{ color: delta < 0 ? COLORS.physique : "#f87171", fontSize: 12 }}
+                >
+                  {delta < 0 ? <TrendingDown size={12} /> : <TrendingUp size={12} />}
+                  {delta > 0 ? "+" : ""}{fmtNum(delta, 1)} kg
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="number"
+            step="0.1"
+            value={weightInput}
+            onChange={(e) => setWeightInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addWeighIn()}
+            placeholder="Today's weight"
+            className="flex-1 px-3 py-2 rounded-md border outline-none font-mono text-sm"
+            style={{ background: COLORS.bg, borderColor: COLORS.border, color: COLORS.text }}
+          />
+          <button
+            onClick={addWeighIn}
+            className="px-4 py-2 rounded-md font-mono uppercase tracking-wider transition-opacity hover:opacity-90"
+            style={{ background: COLORS.physique, color: "#022c10", fontSize: 11, letterSpacing: "0.12em" }}
+          >
+            Log
+          </button>
+        </div>
+      </div>
+
+      {/* Weight chart */}
+      {weightSeries.length > 1 && (
+        <div className="mt-4">
+          <Label>Weight Trend · Last 30 entries</Label>
+          <div className="h-28 mt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={weightSeries} margin={{ top: 5, right: 5, bottom: 0, left: -25 }}>
+                <defs>
+                  <linearGradient id="weightG" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={COLORS.physique} stopOpacity={0.4} />
+                    <stop offset="100%" stopColor={COLORS.physique} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="date" tick={{ fill: COLORS.mutedDim, fontSize: 10, fontFamily: "monospace" }} axisLine={false} tickLine={false} />
+                <YAxis domain={["auto", "auto"]} tick={{ fill: COLORS.mutedDim, fontSize: 10, fontFamily: "monospace" }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  contentStyle={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12 }}
+                  labelStyle={{ color: COLORS.muted }}
+                  itemStyle={{ color: COLORS.physique }}
+                />
+                <Area type="monotone" dataKey="weight" stroke={COLORS.physique} strokeWidth={2} fill="url(#weightG)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Exercise */}
+      <div className="mt-5 pt-5 border-t" style={{ borderColor: COLORS.border }}>
+        <div className="flex items-center justify-between mb-3">
+          <Label>Exercise · Today</Label>
+          <div className="font-mono" style={{ color: COLORS.muted, fontSize: 11 }}>
+            Sprint total: <span style={{ color: COLORS.physique }}>{fmtNum(sprintTotalExercise, 1)}h</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <IconButton onClick={() => adjustExerciseToday(-0.25)} title="Decrease 15min"><Minus size={14} /></IconButton>
+          <div
+            className="flex-1 text-center py-3 rounded-md border font-light tabular-nums"
+            style={{ background: COLORS.bg, borderColor: COLORS.border, color: COLORS.text, fontSize: 20 }}
+          >
+            {fmtNum(todayExercise, 2)} <span style={{ color: COLORS.muted, fontSize: 12 }} className="font-mono">hrs</span>
+          </div>
+          <IconButton onClick={() => adjustExerciseToday(0.25)} title="Increase 15min"><Plus size={14} /></IconButton>
+        </div>
+
+        <div className="h-20 mt-3">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={last7} margin={{ top: 5, right: 5, bottom: 0, left: -30 }}>
+              <XAxis dataKey="day" tick={{ fill: COLORS.mutedDim, fontSize: 10, fontFamily: "monospace" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: COLORS.mutedDim, fontSize: 10, fontFamily: "monospace" }} axisLine={false} tickLine={false} />
+              <Tooltip
+                contentStyle={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12 }}
+                labelStyle={{ color: COLORS.muted }}
+                itemStyle={{ color: COLORS.physique }}
+              />
+              <Bar dataKey="hours" fill={COLORS.physique} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mt-1 text-right font-mono" style={{ color: COLORS.muted, fontSize: 11 }}>
+          7-day total: <span style={{ color: COLORS.physique }}>{fmtNum(weekTotal, 1)}h</span>
+        </div>
+      </div>
+
+      {/* Habits */}
+      <div className="mt-5 pt-5 border-t" style={{ borderColor: COLORS.border }}>
+        <div className="flex items-center justify-between mb-3">
+          <Label>Daily Habits</Label>
+          <div className="font-mono tabular-nums" style={{ color: COLORS.physique, fontSize: 11 }}>
+            {habitsHit} / {habits.length}
+          </div>
+        </div>
+        <div className="space-y-2">
+          {habits.map((h) => {
+            const Icon = h.icon;
+            const checked = !!todayHabits[h.key];
+            return (
+              <button
+                key={h.key}
+                onClick={() => toggleHabit(h.key)}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-md border transition-all hover:bg-white/5"
+                style={{
+                  background: checked ? "rgba(74,222,128,0.05)" : "transparent",
+                  borderColor: checked ? "rgba(74,222,128,0.3)" : COLORS.border,
+                }}
+              >
+                <div
+                  className="w-5 h-5 rounded flex items-center justify-center transition-all"
+                  style={{
+                    background: checked ? COLORS.physique : "transparent",
+                    border: `1.5px solid ${checked ? COLORS.physique : COLORS.borderStrong}`,
+                  }}
+                >
+                  {checked && <Check size={12} color="#022c10" strokeWidth={3} />}
+                </div>
+                <Icon size={14} style={{ color: checked ? COLORS.physique : COLORS.muted }} />
+                <span className="text-sm flex-1 text-left" style={{ color: checked ? COLORS.text : COLORS.muted }}>
+                  {h.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Protocol */}
+      <div className="mt-5 pt-5 border-t" style={{ borderColor: COLORS.border }}>
+        <Label>Protocol · The Science</Label>
+        <div className="mt-3 space-y-2 text-xs leading-relaxed" style={{ color: COLORS.muted }}>
+          <p><span style={{ color: COLORS.physique }}>·</span> Target ~500 kcal/day deficit. More than that and you lose muscle, not fat.</p>
+          <p><span style={{ color: COLORS.physique }}>·</span> Protein 1.6–2.2 g/kg bodyweight preserves lean mass during deficit.</p>
+          <p><span style={{ color: COLORS.physique }}>·</span> Strength train 3–4×/week to keep muscle. Cardio 2× for fat oxidation.</p>
+          <p><span style={{ color: COLORS.physique }}>·</span> Sleep is non-negotiable — under 7 hrs spikes cortisol and stalls fat loss.</p>
+          <p><span style={{ color: COLORS.physique }}>·</span> Realistic over 41 days: 3–4 kg fat with visible facial change. Anything more is muscle loss.</p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ─── REVISION CARD ─────────────────────────────────────────────────────────────
+function RevisionCard({ state, setState, progress }) {
+  const [newSubject, setNewSubject] = useState("");
+
+  const totalHours = state.subjects.reduce((a, s) => a + s.hoursLogged, 0);
+  const totalTopics = state.subjects.flatMap((s) => s.subtopics).length;
+  const doneTopics = state.subjects.flatMap((s) => s.subtopics).filter((t) => t.done).length;
+
+  const addSubject = () => {
+    if (!newSubject.trim()) return;
+    setState((s) => ({
+      ...s,
+      subjects: [...s.subjects, {
+        id: `s${Date.now()}`,
+        name: newSubject.trim(),
+        hoursLogged: 0,
+        expanded: true,
+        subtopics: [],
+      }],
+    }));
+    setNewSubject("");
+  };
+
+  const updateSubject = (id, patch) => {
+    setState((s) => ({
+      ...s,
+      subjects: s.subjects.map((sub) => sub.id === id ? { ...sub, ...patch } : sub),
+    }));
+  };
+
+  const removeSubject = (id) => {
+    setState((s) => ({ ...s, subjects: s.subjects.filter((sub) => sub.id !== id) }));
+  };
+
+  const addSubtopic = (subjectId, title) => {
+    if (!title.trim()) return;
+    setState((s) => ({
+      ...s,
+      subjects: s.subjects.map((sub) =>
+        sub.id === subjectId
+          ? { ...sub, subtopics: [...sub.subtopics, { id: `st${Date.now()}`, title: title.trim(), done: false }] }
+          : sub
+      ),
+    }));
+  };
+
+  const toggleSubtopic = (subjectId, topicId) => {
+    setState((s) => ({
+      ...s,
+      subjects: s.subjects.map((sub) =>
+        sub.id === subjectId
+          ? { ...sub, subtopics: sub.subtopics.map((t) => t.id === topicId ? { ...t, done: !t.done } : t) }
+          : sub
+      ),
+    }));
+  };
+
+  const removeSubtopic = (subjectId, topicId) => {
+    setState((s) => ({
+      ...s,
+      subjects: s.subjects.map((sub) =>
+        sub.id === subjectId
+          ? { ...sub, subtopics: sub.subtopics.filter((t) => t.id !== topicId) }
+          : sub
+      ),
+    }));
+  };
+
+  const adjustHours = (id, delta) => {
+    setState((s) => ({
+      ...s,
+      subjects: s.subjects.map((sub) =>
+        sub.id === id ? { ...sub, hoursLogged: Math.max(0, Math.round((sub.hoursLogged + delta) * 4) / 4) } : sub
+      ),
+    }));
+  };
+
+  return (
+    <Card accent={COLORS.revision} className="p-5 md:p-6">
+      <div className="flex items-start justify-between mb-5">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <BookOpen size={14} style={{ color: COLORS.revision }} />
+            <Label color={COLORS.revision}>Pillar 02 · Revision</Label>
+          </div>
+          <h2 className="font-light" style={{ fontSize: 22, color: COLORS.text }}>
+            Subject Mastery
+          </h2>
+        </div>
+        <div className="text-right">
+          <div className="font-light tabular-nums" style={{ fontSize: 24, color: COLORS.revision }}>
+            {progress.toFixed(0)}%
+          </div>
+          <Label>Topics Done</Label>
+        </div>
+      </div>
+
+      <ProgressBar value={progress} color={COLORS.revision} />
+
+      <div className="grid grid-cols-3 gap-2 mt-5">
+        <Stat label="Subjects" value={state.subjects.length} color={COLORS.revision} />
+        <Stat label="Topics" value={`${doneTopics}/${totalTopics}`} color={COLORS.revision} />
+        <Stat label="Hours" value={fmtNum(totalHours, 1)} color={COLORS.revision} />
+      </div>
+
+      {/* Add subject */}
+      <div className="mt-4 flex gap-2">
+        <input
+          value={newSubject}
+          onChange={(e) => setNewSubject(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && addSubject()}
+          placeholder="Add subject / module…"
+          className="flex-1 px-3 py-2 rounded-md border outline-none text-sm"
+          style={{ background: COLORS.bg, borderColor: COLORS.border, color: COLORS.text }}
+        />
+        <button
+          onClick={addSubject}
+          className="px-3 py-2 rounded-md font-mono uppercase tracking-wider"
+          style={{ background: COLORS.revision, color: "#003746", fontSize: 11, letterSpacing: "0.12em" }}
+        >
+          Add
+        </button>
+      </div>
+
+      {/* Subject list */}
+      <div className="mt-4 space-y-2">
+        {state.subjects.map((sub) => {
+          const subDone = sub.subtopics.filter((t) => t.done).length;
+          const subTotal = sub.subtopics.length;
+          const subPct = subTotal ? (subDone / subTotal) * 100 : 0;
+          return (
+            <SubjectRow
+              key={sub.id}
+              sub={sub}
+              subDone={subDone}
+              subTotal={subTotal}
+              subPct={subPct}
+              onUpdate={(patch) => updateSubject(sub.id, patch)}
+              onRemove={() => removeSubject(sub.id)}
+              onAddTopic={(title) => addSubtopic(sub.id, title)}
+              onToggleTopic={(topicId) => toggleSubtopic(sub.id, topicId)}
+              onRemoveTopic={(topicId) => removeSubtopic(sub.id, topicId)}
+              onAdjustHours={(delta) => adjustHours(sub.id, delta)}
+            />
+          );
+        })}
+      </div>
+
+      <div className="mt-5 pt-5 border-t" style={{ borderColor: COLORS.border }}>
+        <Label>Method · Active Recall</Label>
+        <div className="mt-3 space-y-2 text-xs leading-relaxed" style={{ color: COLORS.muted }}>
+          <p><span style={{ color: COLORS.revision }}>·</span> Don't re-read notes — close the book and self-test. Recall > review.</p>
+          <p><span style={{ color: COLORS.revision }}>·</span> Spaced repetition: revisit a topic 1d, 3d, 7d, 14d after first study.</p>
+          <p><span style={{ color: COLORS.revision }}>·</span> 50/10 — focus blocks of 50 min, then 10 min walk. No phone during the 50.</p>
+          <p><span style={{ color: COLORS.revision }}>·</span> One past paper a week beats five hours of passive reading.</p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function SubjectRow({ sub, subDone, subTotal, subPct, onUpdate, onRemove, onAddTopic, onToggleTopic, onRemoveTopic, onAdjustHours }) {
+  const [newTopic, setNewTopic] = useState("");
+  const [editingName, setEditingName] = useState(false);
+
+  return (
+    <div className="rounded-lg border overflow-hidden" style={{ background: "rgba(255,255,255,0.02)", borderColor: COLORS.border }}>
+      <div className="p-3 flex items-center gap-2">
+        <button
+          onClick={() => onUpdate({ expanded: !sub.expanded })}
+          className="p-1 rounded hover:bg-white/5"
+          style={{ color: COLORS.muted }}
+        >
+          {sub.expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        </button>
+
+        {editingName ? (
+          <input
+            value={sub.name}
+            onChange={(e) => onUpdate({ name: e.target.value })}
+            onBlur={() => setEditingName(false)}
+            onKeyDown={(e) => e.key === "Enter" && setEditingName(false)}
+            autoFocus
+            className="flex-1 px-2 py-1 rounded border outline-none text-sm"
+            style={{ background: COLORS.bg, borderColor: COLORS.border, color: COLORS.text }}
+          />
+        ) : (
+          <button
+            onClick={() => setEditingName(true)}
+            className="flex-1 text-left text-sm font-medium"
+            style={{ color: COLORS.text }}
+          >
+            {sub.name}
+          </button>
+        )}
+
+        <div className="font-mono tabular-nums hidden sm:block" style={{ color: COLORS.muted, fontSize: 11 }}>
+          {subDone}/{subTotal}
+        </div>
+        <div className="font-mono tabular-nums" style={{ color: COLORS.revision, fontSize: 11 }}>
+          {subPct.toFixed(0)}%
+        </div>
+        <IconButton onClick={onRemove} title="Remove subject" color={COLORS.mutedDim}>
+          <Trash2 size={13} />
+        </IconButton>
+      </div>
+
+      <div className="px-3 pb-2">
+        <ProgressBar value={subPct} color={COLORS.revision} height={2} />
+      </div>
+
+      {sub.expanded && (
+        <div className="px-3 pb-3 space-y-2 border-t pt-3" style={{ borderColor: COLORS.border }}>
+          {/* Hours */}
+          <div className="flex items-center justify-between text-xs">
+            <Label>Hours Studied</Label>
+            <div className="flex items-center gap-1">
+              <IconButton onClick={() => onAdjustHours(-0.25)} title="-15 min"><Minus size={12} /></IconButton>
+              <span className="font-mono tabular-nums px-2" style={{ color: COLORS.revision, minWidth: 50, textAlign: "center" }}>
+                {fmtNum(sub.hoursLogged, 2)}h
+              </span>
+              <IconButton onClick={() => onAdjustHours(0.25)} title="+15 min"><Plus size={12} /></IconButton>
+            </div>
+          </div>
+
+          {/* Subtopics */}
+          <div className="space-y-1">
+            {sub.subtopics.map((t) => (
+              <div key={t.id} className="flex items-center gap-2 group">
+                <button
+                  onClick={() => onToggleTopic(t.id)}
+                  className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
+                  style={{
+                    background: t.done ? COLORS.revision : "transparent",
+                    border: `1.5px solid ${t.done ? COLORS.revision : COLORS.borderStrong}`,
+                  }}
+                >
+                  {t.done && <Check size={10} color="#003746" strokeWidth={3} />}
+                </button>
+                <span
+                  className="text-sm flex-1"
+                  style={{
+                    color: t.done ? COLORS.mutedDim : COLORS.text,
+                    textDecoration: t.done ? "line-through" : "none",
+                  }}
+                >
+                  {t.title}
+                </span>
+                <button
+                  onClick={() => onRemoveTopic(t.id)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ color: COLORS.mutedDim }}
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Add topic */}
+          <div className="flex gap-2 pt-1">
+            <input
+              value={newTopic}
+              onChange={(e) => setNewTopic(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onAddTopic(newTopic);
+                  setNewTopic("");
+                }
+              }}
+              placeholder="Add sub-topic…"
+              className="flex-1 px-2 py-1 rounded border outline-none text-xs"
+              style={{ background: COLORS.bg, borderColor: COLORS.border, color: COLORS.text }}
+            />
+            <button
+              onClick={() => { onAddTopic(newTopic); setNewTopic(""); }}
+              className="px-2 py-1 rounded font-mono"
+              style={{ background: "transparent", border: `1px solid ${COLORS.revision}55`, color: COLORS.revision, fontSize: 10 }}
+            >
+              <Plus size={11} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CODING CARD ───────────────────────────────────────────────────────────────
+function CodingCard({ state, setState, progress }) {
+  const completedModules = state.modules.filter((m) => m.done).length;
+  const totalHours = state.modules.reduce((a, m) => a + m.hours, 0);
+  const fpDone = state.finalProject.filter((t) => t.done).length;
+
+  const updateModule = (id, patch) => {
+    setState((s) => ({
+      ...s,
+      modules: s.modules.map((m) => m.id === id ? { ...m, ...patch } : m),
+    }));
+  };
+
+  const adjustModuleProgress = (id, delta) => {
+    setState((s) => ({
+      ...s,
+      modules: s.modules.map((m) => {
+        if (m.id !== id) return m;
+        const next = Math.max(0, Math.min(100, m.progress + delta));
+        return { ...m, progress: next, done: next >= 100 ? true : m.done };
+      }),
+    }));
+  };
+
+  const toggleModuleDone = (id) => {
+    setState((s) => ({
+      ...s,
+      modules: s.modules.map((m) =>
+        m.id === id ? { ...m, done: !m.done, progress: !m.done ? 100 : m.progress } : m
+      ),
+    }));
+  };
+
+  const adjustModuleHours = (id, delta) => {
+    setState((s) => ({
+      ...s,
+      modules: s.modules.map((m) =>
+        m.id === id ? { ...m, hours: Math.max(0, Math.round((m.hours + delta) * 2) / 2) } : m
+      ),
+    }));
+  };
+
+  const toggleFpTask = (id) => {
+    setState((s) => ({
+      ...s,
+      finalProject: s.finalProject.map((t) => t.id === id ? { ...t, done: !t.done } : t),
+    }));
+  };
+
+  return (
+    <Card accent={COLORS.coding} className="p-5 md:p-6">
+      <div className="flex items-start justify-between mb-5">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Code2 size={14} style={{ color: COLORS.coding }} />
+            <Label color={COLORS.coding}>Pillar 03 · Coding</Label>
+          </div>
+          <h2 className="font-light" style={{ fontSize: 22, color: COLORS.text }}>
+            Python → Auto Portfolio
+          </h2>
+        </div>
+        <div className="text-right">
+          <div className="font-light tabular-nums" style={{ fontSize: 24, color: COLORS.coding }}>
+            {progress.toFixed(0)}%
+          </div>
+          <Label>Path Progress</Label>
+        </div>
+      </div>
+
+      <ProgressBar value={progress} color={COLORS.coding} />
+
+      <div className="grid grid-cols-3 gap-2 mt-5">
+        <Stat label="Modules" value={`${completedModules}/${state.modules.length}`} color={COLORS.coding} />
+        <Stat label="Hours" value={fmtNum(totalHours, 1)} color={COLORS.coding} />
+        <Stat label="Final" value={`${fpDone}/${state.finalProject.length}`} color={COLORS.coding} />
+      </div>
+
+      {/* Modules timeline */}
+      <div className="mt-5">
+        <Label>Learning Path</Label>
+        <div className="mt-3 space-y-2 relative">
+          {state.modules.map((m, idx) => (
+            <ModuleRow
+              key={m.id}
+              module={m}
+              index={idx}
+              isLast={idx === state.modules.length - 1}
+              onToggleDone={() => toggleModuleDone(m.id)}
+              onAdjustProgress={(d) => adjustModuleProgress(m.id, d)}
+              onAdjustHours={(d) => adjustModuleHours(m.id, d)}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Final project */}
+      <div className="mt-5 pt-5 border-t" style={{ borderColor: COLORS.border }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Target size={14} style={{ color: COLORS.coding }} />
+          <Label color={COLORS.coding}>Final Project · Automated Stock Portfolio</Label>
+        </div>
+        <div className="space-y-1">
+          {state.finalProject.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => toggleFpTask(t.id)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors hover:bg-white/5"
+            >
+              <div
+                className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
+                style={{
+                  background: t.done ? COLORS.coding : "transparent",
+                  border: `1.5px solid ${t.done ? COLORS.coding : COLORS.borderStrong}`,
+                }}
+              >
+                {t.done && <Check size={10} color="#1a0a3e" strokeWidth={3} />}
+              </div>
+              <span
+                className="text-sm flex-1"
+                style={{
+                  color: t.done ? COLORS.mutedDim : COLORS.text,
+                  textDecoration: t.done ? "line-through" : "none",
+                }}
+              >
+                {t.title}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5 pt-5 border-t" style={{ borderColor: COLORS.border }}>
+        <Label>Stack · Recommended</Label>
+        <div className="mt-3 space-y-2 text-xs leading-relaxed" style={{ color: COLORS.muted }}>
+          <p><span style={{ color: COLORS.coding }}>·</span> Data: <span style={{ color: COLORS.text }}>yfinance</span> for free, <span style={{ color: COLORS.text }}>Alpha Vantage</span> for fundamentals.</p>
+          <p><span style={{ color: COLORS.coding }}>·</span> Analysis: <span style={{ color: COLORS.text }}>pandas + numpy</span>. Skip overengineered ML libraries early.</p>
+          <p><span style={{ color: COLORS.coding }}>·</span> Backtest: <span style={{ color: COLORS.text }}>vectorbt</span> or write your own — you'll learn more from the latter.</p>
+          <p><span style={{ color: COLORS.coding }}>·</span> Broker: <span style={{ color: COLORS.text }}>Alpaca</span> (US, free paper trading) or <span style={{ color: COLORS.text }}>IBKR API</span> (UK ISA-compatible).</p>
+          <p><span style={{ color: COLORS.coding }}>·</span> Deploy: <span style={{ color: COLORS.text }}>Railway</span> or a £4/mo Hetzner VPS + cron.</p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function ModuleRow({ module: m, index, isLast, onToggleDone, onAdjustProgress, onAdjustHours }) {
+  return (
+    <div className="relative pl-7">
+      {!isLast && (
+        <div
+          className="absolute left-[11px] top-7 bottom-[-8px] w-px"
+          style={{ background: m.done ? COLORS.coding : COLORS.border }}
+        />
+      )}
+      <button
+        onClick={onToggleDone}
+        className="absolute left-0 top-1 w-[22px] h-[22px] rounded-full flex items-center justify-center text-[10px] font-mono"
+        style={{
+          background: m.done ? COLORS.coding : COLORS.bg,
+          border: `1.5px solid ${m.done ? COLORS.coding : COLORS.borderStrong}`,
+          color: m.done ? "#1a0a3e" : COLORS.muted,
+        }}
+      >
+        {m.done ? <Check size={12} strokeWidth={3} /> : String(index + 1).padStart(2, "0")}
+      </button>
+
+      <div
+        className="rounded-lg border p-3"
+        style={{
+          background: m.done ? "rgba(167,139,250,0.04)" : "rgba(255,255,255,0.02)",
+          borderColor: m.done ? "rgba(167,139,250,0.2)" : COLORS.border,
+        }}
+      >
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <div className="flex-1">
+            <div className="text-sm font-medium" style={{ color: COLORS.text }}>{m.title}</div>
+            <div className="text-xs mt-0.5" style={{ color: COLORS.muted }}>{m.desc}</div>
+          </div>
+          <div className="font-mono tabular-nums text-right" style={{ color: COLORS.coding, fontSize: 11 }}>
+            {m.progress}%
+          </div>
+        </div>
+
+        <div className="mt-2">
+          <ProgressBar value={m.progress} color={COLORS.coding} height={3} />
+        </div>
+
+        <div className="mt-2 flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            <span className="font-mono" style={{ color: COLORS.mutedDim, fontSize: 10 }}>PROGRESS</span>
+            <IconButton onClick={() => onAdjustProgress(-10)} title="-10%"><Minus size={11} /></IconButton>
+            <IconButton onClick={() => onAdjustProgress(10)} title="+10%"><Plus size={11} /></IconButton>
+          </div>
+          <div className="flex items-center gap-1">
+            <Clock size={11} style={{ color: COLORS.mutedDim }} />
+            <IconButton onClick={() => onAdjustHours(-0.5)} title="-30 min"><Minus size={11} /></IconButton>
+            <span className="font-mono tabular-nums" style={{ color: COLORS.coding, fontSize: 11, minWidth: 36, textAlign: "center" }}>
+              {fmtNum(m.hours, 1)}h
+            </span>
+            <IconButton onClick={() => onAdjustHours(0.5)} title="+30 min"><Plus size={11} /></IconButton>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SMALL ATOMS ───────────────────────────────────────────────────────────────
+function Stat({ label, value, color }) {
+  return (
+    <div
+      className="rounded-md border p-2"
+      style={{ background: "rgba(255,255,255,0.02)", borderColor: COLORS.border }}
+    >
+      <Label>{label}</Label>
+      <div className="font-light tabular-nums mt-1" style={{ fontSize: 16, color }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function NumberInput({ label, value, onChange, color }) {
+  return (
+    <div
+      className="rounded-md border p-2"
+      style={{ background: "rgba(255,255,255,0.02)", borderColor: COLORS.border }}
+    >
+      <Label>{label}</Label>
+      <input
+        type="number"
+        step="0.1"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="—"
+        className="w-full bg-transparent outline-none mt-1 font-light tabular-nums"
+        style={{ fontSize: 16, color }}
+      />
+    </div>
+  );
+}
